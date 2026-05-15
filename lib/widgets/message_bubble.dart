@@ -1,8 +1,10 @@
 import 'dart:io';
 import 'dart:math';
 
+import 'package:audio_waveforms/audio_waveforms.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 
@@ -320,7 +322,7 @@ class _VideoContent extends StatelessWidget {
   }
 }
 
-class _AudioContent extends StatelessWidget {
+class _AudioContent extends StatefulWidget {
   const _AudioContent({
     required this.message,
     required this.isPlaying,
@@ -336,42 +338,80 @@ class _AudioContent extends StatelessWidget {
   final VoidCallback onSpeed;
 
   @override
+  State<_AudioContent> createState() => _AudioContentState();
+}
+
+class _AudioContentState extends State<_AudioContent> {
+  String? _localPath;
+  late PlayerController playerController;
+
+  @override
+  void initState() {
+    super.initState();
+    playerController = PlayerController();
+    _prepareAudio();
+  }
+
+  @override
+  void dispose() {
+    playerController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _prepareAudio() async {
+    final url = widget.message.mediaUrl;
+    if (url == null || url.isEmpty) return;
+
+    try {
+      final directory = await getTemporaryDirectory();
+      final path = '${directory.path}/${widget.message.id}.m4a';
+      final file = File(path);
+
+      if (!await file.exists()) {
+        final request = await HttpClient().getUrl(Uri.parse(url));
+        final response = await request.close();
+        final bytes = await response.fold<List<int>>([], (p, e) => p..addAll(e));
+        await file.writeAsBytes(bytes);
+      }
+
+      await playerController.preparePlayer(path: path, shouldExtractWaveform: true);
+
+      if (mounted) {
+        setState(() => _localPath = path);
+      }
+    } catch (_) {}
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         IconButton.filled(
-          onPressed: onPlay,
-          icon: Icon(isPlaying ? Icons.pause : Icons.play_arrow),
+          onPressed: widget.onPlay,
+          icon: Icon(widget.isPlaying ? Icons.pause : Icons.play_arrow),
         ),
         SizedBox(
-          width: 118,
+          width: 140,
           height: 32,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: List.generate(22, (index) {
-              final height = 8 + ((index * 17) % 22).toDouble();
-              return Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 1),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 200),
-                    height: isPlaying ? height : height * 0.55,
-                    decoration: BoxDecoration(
-                      color: Colors.white70,
-                      borderRadius: BorderRadius.circular(6),
-                    ),
+          child: _localPath == null
+              ? const Center(child: SizedBox(width: 20, height: 2, child: LinearProgressIndicator()))
+              : AudioFileWaveforms(
+                  size: const Size(140, 32),
+                  playerController: playerController,
+                  waveformType: WaveformType.fitWidth,
+                  playerWaveStyle: const PlayerWaveStyle(
+                    fixedWaveColor: Colors.white54,
+                    liveWaveColor: Colors.white,
+                    spacing: 4,
                   ),
                 ),
-              );
-            }),
-          ),
         ),
         const SizedBox(width: 8),
-        Text(_formatDuration(message.audioDuration ?? 0)),
+        Text(_formatDuration(widget.message.audioDuration ?? 0)),
         TextButton(
-          onPressed: onSpeed,
-          child: Text('${speed.toStringAsFixed(0)}x'),
+          onPressed: widget.onSpeed,
+          child: Text('${widget.speed.toStringAsFixed(0)}x'),
         ),
       ],
     );

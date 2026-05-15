@@ -1,5 +1,6 @@
 import 'dart:math';
 
+import 'package:audio_waveforms/audio_waveforms.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -804,23 +805,18 @@ class _RecordingBar extends StatelessWidget {
           Text(_formatDuration(audioState.durationSeconds)),
           const SizedBox(width: 16),
           Expanded(
-            child: Row(
-              children: List.generate(26, (index) {
-                final scale = (sin(index + audioState.amplitude * 4) + 1) / 2;
-                return Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 1),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 90),
-                      height: 8 + (scale * 26 * audioState.amplitude),
-                      decoration: BoxDecoration(
-                        color: Colors.redAccent.withAlpha(190),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                    ),
-                  ),
-                );
-              }),
+            child: AudioWaveforms(
+              size: const Size(double.infinity, 30),
+              recorderController: context.read<AudioCubit>().recorderController,
+              enableGesture: false,
+              waveStyle: const WaveStyle(
+                waveColor: Colors.redAccent,
+                showDurationLabel: false,
+                spacing: 4.0,
+                showBottom: true,
+                extendWaveform: true,
+                showMiddleLine: false,
+              ),
             ),
           ),
           const SizedBox(width: 16),

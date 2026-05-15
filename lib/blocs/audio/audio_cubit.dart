@@ -1,12 +1,12 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:audio_waveforms/audio_waveforms.dart';
 import 'package:equatable/equatable.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:record/record.dart';
 import 'package:uuid/uuid.dart';
 
 enum AudioStatus { idle, recording, preview, playing, paused, error }
@@ -17,7 +17,6 @@ class AudioState extends Equatable {
   final String? playingMessageId;
   final int durationSeconds;
   final double speed;
-  final double amplitude;
   final String? error;
 
   const AudioState({
@@ -26,7 +25,6 @@ class AudioState extends Equatable {
     this.playingMessageId,
     this.durationSeconds = 0,
     this.speed = 1,
-    this.amplitude = 0,
     this.error,
   });
 
@@ -38,7 +36,6 @@ class AudioState extends Equatable {
     String? playingMessageId,
     int? durationSeconds,
     double? speed,
-    double? amplitude,
     String? error,
     bool clearFile = false,
     bool clearPlaying = false,
@@ -52,7 +49,6 @@ class AudioState extends Equatable {
           : playingMessageId ?? this.playingMessageId,
       durationSeconds: durationSeconds ?? this.durationSeconds,
       speed: speed ?? this.speed,
-      amplitude: amplitude ?? this.amplitude,
       error: clearError ? null : error ?? this.error,
     );
   }
@@ -64,14 +60,13 @@ class AudioState extends Equatable {
     playingMessageId,
     durationSeconds,
     speed,
-    amplitude,
     error,
   ];
 }
 
 class AudioCubit extends Cubit<AudioState> {
   AudioCubit()
-    : _recorder = AudioRecorder(),
+    : recorderController = RecorderController(),
       _player = AudioPlayer(),
       super(const AudioState.idle()) {
     _player.playerStateStream.listen((playerState) {
@@ -87,15 +82,14 @@ class AudioCubit extends Cubit<AudioState> {
     });
   }
 
-  final AudioRecorder _recorder;
+  final RecorderController recorderController;
   final AudioPlayer _player;
   final Uuid _uuid = const Uuid();
   Timer? _timer;
-  StreamSubscription<Amplitude>? _amplitudeSubscription;
 
   Future<void> startRecording() async {
     final permission = await Permission.microphone.request();
-    if (!permission.isGranted || !await _recorder.hasPermission()) {
+    if (!permission.isGranted) {
       emit(
         state.copyWith(
           status: AudioStatus.error,
@@ -104,31 +98,17 @@ class AudioCubit extends Cubit<AudioState> {
       );
       return;
     }
+
     final directory = await getTemporaryDirectory();
     final path = '${directory.path}/${_uuid.v4()}.m4a';
-    await _recorder.start(
-      const RecordConfig(
-        encoder: AudioEncoder.aacLc,
-        bitRate: 64000,
-        sampleRate: 22050,
-        numChannels: 1,
-        autoGain: true,
-        echoCancel: true,
-        noiseSuppress: true,
-      ),
-      path: path,
-    );
+    
+    await recorderController.record(path: path);
+    
     _timer?.cancel();
-    _amplitudeSubscription?.cancel();
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
       emit(state.copyWith(durationSeconds: state.durationSeconds + 1));
     });
-    _amplitudeSubscription = _recorder
-        .onAmplitudeChanged(const Duration(milliseconds: 100))
-        .listen((amplitude) {
-          final normalized = ((amplitude.current + 60) / 60).clamp(0.05, 1.0);
-          emit(state.copyWith(amplitude: normalized));
-        });
+
     emit(
       state.copyWith(
         status: AudioStatus.recording,
@@ -141,8 +121,7 @@ class AudioCubit extends Cubit<AudioState> {
 
   Future<String?> stopRecording() async {
     _timer?.cancel();
-    await _amplitudeSubscription?.cancel();
-    final path = await _recorder.stop();
+    final path = await recorderController.stop();
     if (path == null || !File(path).existsSync()) {
       emit(
         state.copyWith(
@@ -158,8 +137,7 @@ class AudioCubit extends Cubit<AudioState> {
 
   Future<void> cancelRecording() async {
     _timer?.cancel();
-    await _amplitudeSubscription?.cancel();
-    await _recorder.cancel();
+    await recorderController.stop();
     final path = state.filePath;
     if (path != null) {
       final file = File(path);
@@ -214,8 +192,7 @@ class AudioCubit extends Cubit<AudioState> {
   @override
   Future<void> close() async {
     _timer?.cancel();
-    await _amplitudeSubscription?.cancel();
-    await _recorder.dispose();
+    recorderController.dispose();
     await _player.dispose();
     return super.close();
   }

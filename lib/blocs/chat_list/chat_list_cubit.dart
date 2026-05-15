@@ -60,6 +60,11 @@ class ChatListCubit extends Cubit<ChatListState> {
                 conversations: conversations,
               ),
             );
+            for (final conv in conversations) {
+              if ((conv.unreadCount[_uid] ?? 0) > 0) {
+                _repository.markDelivered(conv.id);
+              }
+            }
           },
           onError: (Object error) {
             emit(

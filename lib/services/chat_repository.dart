@@ -146,7 +146,7 @@ class ChatRepository {
     if (user == null) {
       throw StateError('You must be signed in to send messages.');
     }
-    final messageId = _uuid.v4();
+    final messageId = localId ?? _uuid.v4();
     final message = Message(
       id: messageId,
       senderId: user.uid,
@@ -163,15 +163,26 @@ class ChatRepository {
       localId: localId,
     );
 
+    final convDoc = await _conversations.doc(conversationId).get();
+    final participants = List<String>.from(convDoc.data()?['participants'] ?? []);
+
     final batch = _firestore.batch();
     batch.set(
       messagesRef(conversationId).doc(messageId),
       message.toFirestore(timestampValue: FieldValue.serverTimestamp()),
     );
-    batch.update(_conversations.doc(conversationId), {
+    
+    final updates = <String, dynamic>{
       'lastMessage': text,
       'lastMessageTime': FieldValue.serverTimestamp(),
-    });
+    };
+    for (final pId in participants) {
+      if (pId != user.uid) {
+        updates['unreadCount.$pId'] = FieldValue.increment(1);
+      }
+    }
+    
+    batch.update(_conversations.doc(conversationId), updates);
     await batch.commit();
   }
 
@@ -189,7 +200,7 @@ class ChatRepository {
     if (user == null) {
       throw StateError('You must be signed in to send messages.');
     }
-    final messageId = _uuid.v4();
+    final messageId = localId ?? _uuid.v4();
     final messageDoc = messagesRef(conversationId).doc(messageId);
     final placeholder = Message(
       id: messageId,
@@ -249,10 +260,18 @@ class ChatRepository {
         'status': MessageStatus.sent.name,
         'uploadProgress': 1,
       });
-      await _conversations.doc(conversationId).update({
+      final convDoc = await _conversations.doc(conversationId).get();
+      final participants = List<String>.from(convDoc.data()?['participants'] ?? []);
+      final updates = <String, dynamic>{
         'lastMessage': _lastMessageLabel(type),
         'lastMessageTime': FieldValue.serverTimestamp(),
-      });
+      };
+      for (final pId in participants) {
+        if (pId != user.uid) {
+          updates['unreadCount.$pId'] = FieldValue.increment(1);
+        }
+      }
+      await _conversations.doc(conversationId).update(updates);
     } catch (error) {
       await messageDoc.update({
         'status': MessageStatus.failed.name,
@@ -327,6 +346,12 @@ class ChatRepository {
   }
 
   Future<void> markSeen(String conversationId) async {
+    final uid = currentUid;
+    if (uid.isNotEmpty) {
+      await _conversations.doc(conversationId).update({
+        'unreadCount.$uid': 0,
+      });
+    }
     await _markStatus(
       conversationId: conversationId,
       allowedStatuses: {MessageStatus.sent.name, MessageStatus.delivered.name},

@@ -108,7 +108,6 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
       ),
     );
     await _repository.markDelivered(conversationId);
-    await _repository.markSeen(conversationId);
     await _flushQueueIfOnline();
   }
 
